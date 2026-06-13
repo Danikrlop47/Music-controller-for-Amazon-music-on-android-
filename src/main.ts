@@ -5,6 +5,7 @@ import { MediaController } from './media/media-controller'
 
 const bridge = await waitForEvenAppBridge()
 const controller = new MediaController(bridge)
+await controller.init()
 
 const hud = new GlassesHud(bridge)
 await hud.ensurePage()
@@ -14,16 +15,22 @@ controller.subscribe(snapshot => {
 })
 
 const unbindHud = hud.bindEvents({
-  onPlayPause: () => void controller.sendAction('playPause'),
-  onNext: () => void controller.sendAction('next'),
-  onPrevious: () => void controller.sendAction('previous'),
+  onPlayPause: () => void controller.sendAction('playPause', true),
+  onNext: () => void controller.sendAction('next', true),
+  onPrevious: () => void controller.sendAction('previous', true),
 })
 
 const appRoot = document.querySelector<HTMLElement>('#app')
 if (appRoot) mountCompanionUi(controller, appRoot)
 
-controller.setSource('demo')
-console.log('[app] Amazon Music Controller ready — demo mode active')
+controller.autoSelectSource()
+
+// Start demo playback when in demo mode so glasses HUD shows activity immediately
+if (controller.getSource() === 'demo') {
+  void controller.sendAction('play')
+}
+
+console.log('[app] Amazon Music Controller ready')
 
 window.addEventListener('beforeunload', () => {
   controller.dispose()

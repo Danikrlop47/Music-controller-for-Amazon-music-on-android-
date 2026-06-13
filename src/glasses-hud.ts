@@ -15,22 +15,31 @@ import {
   INFO_PANEL_H,
   INFO_PANEL_W,
 } from './layout/display'
-import { formatDuration, truncate, type MediaSnapshot } from './types'
+import {
+  actionLabel,
+  formatDuration,
+  truncate,
+  type MediaSnapshot,
+} from './types'
 
 const EVENT_LAYER_ID = 1
 const INFO_CONTAINER_ID = 2
 const CONTROLS_CONTAINER_ID = 3
 
+function normalizeEventType(raw: unknown): OsEventTypeList | undefined {
+  return OsEventTypeList.fromJson(raw)
+}
+
 function formatInfoPanel(snapshot: MediaSnapshot): string {
   const { track, isPlaying, position } = snapshot
-  const state = isPlaying ? '▶ Playing' : '⏸ Paused'
+  const state = isPlaying ? '> Playing' : '|| Paused'
   const progress =
     track.duration > 0
       ? `${formatDuration(position)} / ${formatDuration(track.duration)}`
       : formatDuration(position)
 
   return [
-    '♫ NOW PLAYING',
+    'NOW PLAYING',
     '',
     truncate(track.title, 28),
     truncate(track.artist, 28),
@@ -44,17 +53,27 @@ function formatInfoPanel(snapshot: MediaSnapshot): string {
 }
 
 function formatControlsPanel(snapshot: MediaSnapshot): string {
+  if (snapshot.lastAction) {
+    return ['', `>> ${actionLabel(snapshot.lastAction)}`, ''].join('\n')
+  }
+
   const lines = [
     'CONTROLS',
     '',
-    'Tap → play/pause',
-    'Scroll ↑ → next',
-    'Scroll ↓ → prev',
-    'Dbl-click → exit',
+    'Tap = play/pause',
+    'Scroll up = next',
+    'Scroll dn = prev',
+    'Dbl-click = exit',
   ]
 
-  if (snapshot.source === 'live' && snapshot.status === 'no_session') {
-    lines.push('', 'No media', 'Open Amazon', 'Music first')
+  if (snapshot.source === 'live') {
+    if (snapshot.status === 'no_session') {
+      lines.push('', 'No session', 'Open Amazon', 'Music first')
+    } else if (snapshot.status === 'ok') {
+      lines.push('', 'Amazon Music', 'connected')
+    }
+  } else {
+    lines.push('', 'Demo mode')
   }
 
   return lines.join('\n')
@@ -153,7 +172,7 @@ export class GlassesHud {
     const infoText = formatInfoPanel(snapshot)
     const controlsText = formatControlsPanel(snapshot)
     const infoKey = `${infoText}|${snapshot.isPlaying}|${Math.floor(snapshot.position)}`
-    const controlsKey = `${controlsText}|${snapshot.status}`
+    const controlsKey = `${controlsText}|${snapshot.status}|${snapshot.lastAction ?? ''}`
 
     if (infoKey === this.lastInfoKey && controlsKey === this.lastControlsKey) {
       return Promise.resolve()
@@ -194,10 +213,15 @@ export class GlassesHud {
     onNext: () => void
     onPrevious: () => void
   }): () => void {
-    return this.bridge.onEvenHubEvent(event => {
-      const sysType = event.sysEvent?.eventType ?? null
-      const textType = event.textEvent?.eventType ?? null
-      const type = sysType ?? textType
+    let lastEventAt = 0
+    const DEBOUNCE_MS = 250
+
+    const handleType = (type: OsEventTypeList | undefined): void => {
+      if (type == null) return
+
+      const now = Date.now()
+      if (now - lastEventAt < DEBOUNCE_MS) return
+      lastEventAt = now
 
       if (type === OsEventTypeList.DOUBLE_CLICK_EVENT) {
         void this.bridge.shutDownPageContainer(1)
@@ -224,6 +248,23 @@ export class GlassesHud {
         type === OsEventTypeList.ABNORMAL_EXIT_EVENT
       ) {
         this.pageReady = false
+      }
+    }
+
+    return this.bridge.onEvenHubEvent(event => {
+      const candidates = [
+        event.sysEvent?.eventType,
+        event.textEvent?.eventType,
+        event.listEvent?.eventType,
+        (event.jsonData as { eventType?: unknown } | undefined)?.eventType,
+      ]
+
+      for (const raw of candidates) {
+        const type = normalizeEventType(raw)
+        if (type != null) {
+          handleType(type)
+          return
+        }
       }
     })
   }
