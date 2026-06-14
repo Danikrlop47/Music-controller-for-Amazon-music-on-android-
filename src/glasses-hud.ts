@@ -5,6 +5,7 @@ import {
   TextContainerProperty,
   TextContainerUpgrade,
   OsEventTypeList,
+  type EvenHubEvent,
 } from '@evenrealities/even_hub_sdk'
 import {
   CONTROLS_PANEL_H,
@@ -27,7 +28,44 @@ const INFO_CONTAINER_ID = 2
 const CONTROLS_CONTAINER_ID = 3
 
 function normalizeEventType(raw: unknown): OsEventTypeList | undefined {
+  if (raw === undefined || raw === null) return undefined
   return OsEventTypeList.fromJson(raw)
+}
+
+/** Resolve OS input events — click often arrives as sysEvent.eventSource only. */
+function resolveEventType(event: EvenHubEvent): OsEventTypeList | undefined {
+  const fromText = normalizeEventType(event.textEvent?.eventType)
+  if (fromText !== undefined) return fromText
+
+  const fromList = normalizeEventType(event.listEvent?.eventType)
+  if (fromList !== undefined) return fromList
+
+  const fromSys = normalizeEventType(event.sysEvent?.eventType)
+  if (fromSys !== undefined) return fromSys
+
+  const json = event.jsonData as { eventType?: unknown; eventSource?: unknown } | undefined
+  const fromJson = normalizeEventType(json?.eventType)
+  if (fromJson !== undefined) return fromJson
+
+  // Single tap: G2 firmware / simulator sends eventSource without eventType
+  if (
+    event.sysEvent?.eventSource != null &&
+    event.sysEvent.eventType == null &&
+    !event.sysEvent.imuData
+  ) {
+    return OsEventTypeList.CLICK_EVENT
+  }
+
+  if (
+    json?.eventSource != null &&
+    json.eventType == null &&
+    !event.textEvent &&
+    !event.listEvent
+  ) {
+    return OsEventTypeList.CLICK_EVENT
+  }
+
+  return undefined
 }
 
 function formatInfoPanel(snapshot: MediaSnapshot): string {
@@ -252,20 +290,8 @@ export class GlassesHud {
     }
 
     return this.bridge.onEvenHubEvent(event => {
-      const candidates = [
-        event.sysEvent?.eventType,
-        event.textEvent?.eventType,
-        event.listEvent?.eventType,
-        (event.jsonData as { eventType?: unknown } | undefined)?.eventType,
-      ]
-
-      for (const raw of candidates) {
-        const type = normalizeEventType(raw)
-        if (type != null) {
-          handleType(type)
-          return
-        }
-      }
+      const type = resolveEventType(event)
+      handleType(type)
     })
   }
 }

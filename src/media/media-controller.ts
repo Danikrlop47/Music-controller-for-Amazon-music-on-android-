@@ -117,7 +117,7 @@ export class MediaController {
     await this.pollLive()
   }
 
-  async sendAction(action: MediaAction, fromGlasses = false): Promise<void> {
+  async sendAction(action: MediaAction, _fromGlasses = false): Promise<void> {
     if (this.actionInFlight) return
     this.actionInFlight = true
 
@@ -134,11 +134,13 @@ export class MediaController {
 
     try {
       if (this.source === 'live') {
-        const ok = await sendRemoteMediaAction(this.bridge, action)
-        if (!ok && fromGlasses) {
-          this.error = 'Control failed — ensure Amazon Music is playing'
-          this.notify()
-        }
+        if (action === 'playPause') this.isPlaying = !this.isPlaying
+        else if (action === 'play') this.isPlaying = true
+        else if (action === 'pause') this.isPlaying = false
+        this.touch()
+        this.notify()
+
+        await sendRemoteMediaAction(this.bridge, action)
         await this.pollLive()
         return
       }
